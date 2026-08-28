@@ -3636,6 +3636,7 @@ window.OrbitControls = OrbitControls;
     });
   })();
   renderSampleScreen();
+  window.__ncDebug = { sim: sim, octx: octx, renderSampleScreen: renderSampleScreen, drawModeSelectLive: drawModeSelectLive, drawQuizCanvas: drawQuizCanvas };
 
   // Button map, identical to nodecard_firmware.cpp's loop(). Navigation
   // mode (boot/deckselect/modeselect): 1 up, 2 select, 3 back/exit, 4

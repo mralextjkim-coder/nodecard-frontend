@@ -149,6 +149,7 @@ a { color: var(--blue); text-decoration: none; }
 
 .lib-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; flex-wrap: wrap; padding-top: 56px; }
 .lib-toolbar .lib-hero { padding: 0; text-align: left; flex: 1; min-width: 280px; }
+.lib-toolbar .lib-hero .sub { margin-left: 0; }
 .lib-search { position: relative; margin-top: 6px; flex: none; }
 .lib-search svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--gray-mid); cursor: pointer; }
 .lib-search input { width: 240px; max-width: 100%; padding: 11px 16px 11px 38px; border-radius: 999px; border: 1px solid var(--line); background: var(--white); font: inherit; font-size: 13.5px; color: var(--gray-dark); transition: box-shadow 0.3s var(--ease), border-color 0.3s var(--ease); }
@@ -156,6 +157,7 @@ a { color: var(--blue); text-decoration: none; }
 .lib-search input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(57,73,171,0.15); }
 @media (max-width: 640px) {
   .lib-toolbar .lib-hero { text-align: center; }
+  .lib-toolbar .lib-hero .sub { margin-left: auto; }
   .lib-search { align-self: stretch; }
   .lib-search input { width: 100%; }
 }
@@ -5823,10 +5825,15 @@ void loop() {
       '</div>';
   }
 
+  // Only the top 5 categories are ever browsable on the page itself --
+  // everything else in DECKS still matches in goToSearchResults() below
+  // (which filters the full array, not just what's rendered here), so
+  // nothing is actually unreachable, it just isn't listed by default.
+  var MAX_VISIBLE_CATEGORIES = 5;
   var libSections = document.getElementById('lib-sections');
   function renderLibrary() {
     libSections.innerHTML = '';
-    CATEGORY_ORDER.forEach(function (cat) {
+    CATEGORY_ORDER.slice(0, MAX_VISIBLE_CATEGORIES).forEach(function (cat) {
       var items = cat === "Our Choice" ? DECKS.filter(function (d) { return d.pick; }) : DECKS.filter(function (d) { return d.category === cat; });
       if (!items.length) return;
       var section = document.createElement('div');
@@ -5840,6 +5847,13 @@ void loop() {
     libSections.querySelectorAll('.deck-card').forEach(function (card) {
       card.addEventListener('click', function () { goToDeckDetail(card.getAttribute('data-deck-id')); });
     });
+    if (CATEGORY_ORDER.length > MAX_VISIBLE_CATEGORIES) {
+      var more = document.createElement('p');
+      more.className = 'basics-sub';
+      more.style.cssText = 'text-align:center;margin-top:36px;';
+      more.textContent = 'More subjects are in the library than shown here -- search above to find them.';
+      libSections.appendChild(more);
+    }
   }
 
   renderLibrary();

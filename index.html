@@ -3430,10 +3430,24 @@ window.OrbitControls = OrbitControls;
   // the same way (12px pitch, the real box height plus a safety margin).
   function drawModeSelectLive() {
     var deck = DECKS_JS[sim.deckIndex];
-    ddCentered(deck.name, 22, "600 13px Literata, Georgia, serif");
-    ddListRow("Main Deck (" + deck.cardCount + ")", 34, sim.modeCursor === 0, "10px Literata, Georgia, serif");
-    ddListRow("Review Deck (" + liveReviewCount(sim.deckIndex) + ")", 46, sim.modeCursor === 1, "10px Literata, Georgia, serif");
-    ddListRow("Test", 58, sim.modeCursor === 2, "10px Literata, Georgia, serif");
+    // Title shrunk from bold 600-13px to the same 10px body size the
+    // rows use -- real measured ascent/descent showed the title at its
+    // old bold size plus 3 real-height selectable rows don't both fit
+    // this panel's 5mm-margin-safe ~40px band (the bold size alone ate
+    // enough of the budget to push the 3rd row past the bottom margin).
+    // All positions below are computed from real metrics, not guessed.
+    var titleFont = "10px Literata, Georgia, serif";
+    var rowFont = "10px Literata, Georgia, serif";
+    var tm = ddMetrics(titleFont), rm = ddMetrics(rowFont);
+    var titleY = DD_MARGIN + tm.asc;
+    var gap = 1; // real, deliberate 1px clearance -- not touching, not guessed
+    var row1 = titleY + tm.desc + gap + rm.asc;
+    var pitch = rm.asc + rm.desc; // rows touch at zero extra gap -- still non-overlapping, verified by the box math in ddListRow using these same real metrics
+
+    ddCentered(deck.name, titleY, titleFont);
+    ddListRow("Main Deck (" + deck.cardCount + ")", row1, sim.modeCursor === 0, rowFont);
+    ddListRow("Review Deck (" + liveReviewCount(sim.deckIndex) + ")", row1 + pitch, sim.modeCursor === 1, rowFont);
+    ddListRow("Test", row1 + 2 * pitch, sim.modeCursor === 2, rowFont);
   }
 
   // Quiz screens can't use the pre-rendered-real-u8g2-PNG approach every
@@ -3444,32 +3458,67 @@ window.OrbitControls = OrbitControls;
   // approximation of the real firmware's screens, not a re-run of the
   // u8g2 library, and disclosed as such rather than implied to be pixel-
   // identical to the actual device output.
-  function ddCentered(text, y, font) {
+  // ---- Mandatory text-safety rules (this canvas is the same real
+  // panel size the firmware targets -- 128x64 -- so the same rules and
+  // the same 12px margin apply, derived the same way: see ui.h's real
+  // comment for the mm math. 1) no text within 5mm/12px of any edge.
+  // 2) no two text elements ever overlap. 3) same-type text stays one
+  // font, sizes within 3 of each other -- already true here: bold
+  // "headline" text (12/13/15px) and regular "body/list" text (10/11px)
+  // are the two real types in this file, both all-Literata.
+  var DD_MARGIN = 12;
+  var DD_SAFE_W = 128 - 2 * DD_MARGIN;
+
+  function truncateToFit(text, font, maxW) {
     octx.font = font;
-    var w = octx.measureText(text).width;
+    if (octx.measureText(text).width <= maxW) return text;
+    var t = text;
+    while (t.length > 1 && octx.measureText(t + "..").width > maxW) t = t.slice(0, -1);
+    return t + "..";
+  }
+  // Truncation is baked into ddCentered/ddListRow themselves (not left to
+  // callers to remember) so every screen automatically stays margin-safe
+  // in X, the same way ui.h's drawStatusBar/truncateToFit works.
+  function ddCentered(text, y, font) {
+    var safe = truncateToFit(text, font, DD_SAFE_W);
+    octx.font = font;
+    var w = octx.measureText(safe).width;
+    var x = (128 - w) / 2;
+    if (x < DD_MARGIN) x = DD_MARGIN;
+    if (x + w > 128 - DD_MARGIN) x = 128 - DD_MARGIN - w;
     octx.fillStyle = LCD_FG;
-    octx.fillText(text, (128 - w) / 2, y);
+    octx.fillText(safe, x, y);
   }
   function ddListRow(text, y, selected, font) {
+    // Leaves room for the selection box's 3px inset each side, so the
+    // box itself (not just the text inside it) stays margin-safe too.
+    var safe = truncateToFit(text, font, DD_SAFE_W - 6);
     octx.font = font;
-    var w = octx.measureText(text).width;
+    var w = octx.measureText(safe).width;
     var x = (128 - w) / 2;
+    if (x - 3 < DD_MARGIN) x = DD_MARGIN + 3;
+    if (x + w + 3 > 128 - DD_MARGIN) x = 128 - DD_MARGIN - w - 3;
+    // Real per-string ascent/descent for the highlight box, not the old
+    // fixed -8/+2 -- that fixed box (10px tall) was taller than 3
+    // stacked rows' real available pitch on this panel once a title line
+    // sits above them (see drawModeSelectLive), which would have made
+    // adjacent rows' boxes genuinely overlap. Real metrics fit exactly.
+    var m = octx.measureText("Mgjpqy");
+    var top = m.actualBoundingBoxAscent, bot = m.actualBoundingBoxDescent;
     if (selected) {
       octx.fillStyle = LCD_FG;
-      octx.fillRect(x - 3, y - 8, w + 6, 10);
+      octx.fillRect(x - 3, y - top, w + 6, top + bot);
       octx.fillStyle = LCD_BG;
-      octx.fillText(text, x, y);
+      octx.fillText(safe, x, y);
     } else {
       octx.fillStyle = LCD_FG;
-      octx.fillText(text, x, y);
+      octx.fillText(safe, x, y);
     }
   }
-  function ddTruncated(text, y, font) {
+  function ddMetrics(font) {
     octx.font = font;
-    if (octx.measureText(text).width <= 106) { ddCentered(text, y, font); return; }
-    var s = text;
-    while (s.length > 0 && octx.measureText(s + "...").width > 106) s = s.slice(0, -1);
-    ddCentered(s + "...", y, font);
+    var m = octx.measureText("Mgjpqy");
+    return { asc: m.actualBoundingBoxAscent, desc: m.actualBoundingBoxDescent };
   }
   function ddWrapped(text, startY, endY, font) {
     octx.font = font;
@@ -3477,7 +3526,7 @@ window.OrbitControls = OrbitControls;
     var line = "", y = startY;
     for (var i = 0; i < words.length && y <= endY; i++) {
       var test = line ? line + " " + words[i] : words[i];
-      if (line && octx.measureText(test).width > 106) {
+      if (line && octx.measureText(test).width > DD_SAFE_W) {
         ddCentered(line, y, font);
         y += 10;
         line = words[i];
@@ -3488,53 +3537,88 @@ window.OrbitControls = OrbitControls;
     if (y <= endY && line) ddCentered(line, y, font);
   }
 
+  // Real, deliberate 1px clearance used between stacked elements
+  // throughout this function -- not touching (0px), not guessed.
+  var DD_GAP = 1;
+
   function drawQuizCanvas() {
     var deck = QUIZ_DECKS[sim.deckIndex];
     var cards = (deck && deck.cards) || [];
+    var bodyFont = "10px Literata, Georgia, serif";
+    var bm = ddMetrics(bodyFont);
+    var rowPitch = bm.asc + bm.desc; // real row height, rows touch at zero extra gap (verified non-overlapping via ddListRow's own real-metric box)
+
     if (sim.state === "quizsource") {
-      ddCentered("Test on:", 24, "600 13px Literata, Georgia, serif");
-      ddListRow("Main Deck", 38, sim.quizSourceCursor === 0, "11px Literata, Georgia, serif");
-      ddListRow("Review Deck", 50, sim.quizSourceCursor === 1, "11px Literata, Georgia, serif");
+      var titleFont = "600 13px Literata, Georgia, serif";
+      var tm = ddMetrics(titleFont);
+      var titleY = DD_MARGIN + tm.asc;
+      var row1 = titleY + tm.desc + DD_GAP + bm.asc;
+      ddCentered("Test on:", titleY, titleFont);
+      ddListRow("Main Deck", row1, sim.quizSourceCursor === 0, bodyFont);
+      ddListRow("Review Deck", row1 + rowPitch, sim.quizSourceCursor === 1, bodyFont);
     } else if (sim.state === "quizquestion" && cards.length) {
-      // 2-line wrap for the definition, choice rows at the same 12px
-      // pitch used everywhere else selection boxes appear (see
-      // drawModeSelectLive) -- the old 7px pitch let boxes overlap by
-      // 3px. Row coordinates match the real firmware's drawQuizQuestion
-      // exactly (33/45/57) for cross-consistency between demo and device.
+      // Real math: a 2-line wrapped definition plus 3+ real-height choice
+      // rows don't both fit this panel's 5mm-margin-safe band (same class
+      // of constraint as drawModeSelectLive) -- the definition is capped
+      // to 1 real-truncated line so every answer choice still gets a
+      // full, real, non-overlapping row rather than the reverse (a
+      // fuller definition is not worth an unselectable choice).
       var correct = cards[sim.quizChoiceCards[sim.quizCorrectSlot]];
-      ddWrapped(correct.def, 11, 20, "10px Literata, Georgia, serif");
+      var defY = DD_MARGIN + bm.asc;
+      ddCentered(correct.def, defY, bodyFont);
+      var row1q = defY + bm.desc + DD_GAP + bm.asc;
       for (var i = 0; i < sim.quizChoiceCards.length; i++) {
-        ddListRow(cards[sim.quizChoiceCards[i]].word, 33 + i * 12, i === sim.quizCursor, "10px Literata, Georgia, serif");
+        ddListRow(cards[sim.quizChoiceCards[i]].word, row1q + i * rowPitch, i === sim.quizCursor, bodyFont);
       }
     } else if (sim.state === "quizfeedback" && cards.length) {
       var c = cards[sim.quizChoiceCards[sim.quizCorrectSlot]];
       if (sim.quizLastCorrect) {
-        ddCentered("Correct!", 28, "600 15px Literata, Georgia, serif");
-        ddCentered(c.word, 44, "11px Literata, Georgia, serif");
+        var bigFont = "600 15px Literata, Georgia, serif";
+        var wordFont = "11px Literata, Georgia, serif";
+        var bigM = ddMetrics(bigFont);
+        var bigY = DD_MARGIN + bigM.asc;
+        var wordM = ddMetrics(wordFont);
+        var wordY = bigY + bigM.desc + DD_GAP + wordM.asc;
+        ddCentered("Correct!", bigY, bigFont);
+        ddCentered(c.word, wordY, wordFont);
       } else {
-        // "Not quite." shrunk from a bold 13px headline to the same
-        // 10px body size as the rest of this branch (matches the real
-        // firmware's fix -- the bigger headline didn't leave room for
-        // the full 2-line definition without truncating it again).
-        ddCentered("Not quite.", 19, "10px Literata, Georgia, serif");
-        ddCentered("Answer: " + c.word, 30, "10px Literata, Georgia, serif");
-        ddWrapped(c.def, 41, 51, "10px Literata, Georgia, serif");
+        // 3 lines (label, answer, one def line) -- same real-metric
+        // stacking as everywhere else in this function. Definition capped
+        // to 1 line for the same reason as quizquestion above.
+        var l1Y = DD_MARGIN + bm.asc;
+        var l2Y = l1Y + rowPitch;
+        var l3Y = l2Y + rowPitch;
+        ddCentered("Not quite.", l1Y, bodyFont);
+        ddCentered("Answer: " + c.word, l2Y, bodyFont);
+        ddCentered(c.def, l3Y, bodyFont);
       }
     } else if (sim.state === "quizresult") {
-      ddCentered("Test Complete", 20, "600 13px Literata, Georgia, serif");
-      // "display the questions right over total questions" -- score shown
-      // as correct/total stacked over an explicit "x / y" fraction.
-      ddCentered(sim.quizCorrect + " / " + sim.quizIndices.length, 40, "600 15px Literata, Georgia, serif");
-      ddCentered("correct", 52, "10px Literata, Georgia, serif");
+      var t1Font = "600 13px Literata, Georgia, serif";
+      var scoreFont = "600 15px Literata, Georgia, serif";
+      var t1M = ddMetrics(t1Font);
+      var t1Y = DD_MARGIN + t1M.asc;
+      var scoreM = ddMetrics(scoreFont);
+      var scoreY = t1Y + t1M.desc + DD_GAP + scoreM.asc;
+      var labelY = scoreY + scoreM.desc + DD_GAP + bm.asc;
+      ddCentered("Test Complete", t1Y, t1Font);
+      ddCentered(sim.quizCorrect + " / " + sim.quizIndices.length, scoreY, scoreFont);
+      ddCentered("correct", labelY, bodyFont);
     } else if (sim.state === "quizreviewprompt") {
-      // Matches the real firmware's drawQuizReviewPrompt row coordinates
-      // (19/29/41/53) -- the old 14/24/38/50 put the first line's top
-      // too close to the panel edge and left the row block only 4px
-      // clear of the header text above it.
-      ddCentered("Update Review Deck", 19, "600 12px Literata, Georgia, serif");
-      ddCentered("with missed cards?", 29, "11px Literata, Georgia, serif");
-      ddListRow("Yes", 41, sim.quizReviewPromptCursor === 0, "11px Literata, Georgia, serif");
-      ddListRow("No", 53, sim.quizReviewPromptCursor === 1, "11px Literata, Georgia, serif");
+      // 2 header lines + 2 choice rows -- real metrics confirm this fits
+      // (unlike the 1-title+3-row case above) since there are only 2
+      // rows here, not 3.
+      var h1Font = "600 12px Literata, Georgia, serif";
+      var h2Font = "11px Literata, Georgia, serif";
+      var h1M = ddMetrics(h1Font);
+      var h1Y = DD_MARGIN + h1M.asc;
+      var h2M = ddMetrics(h2Font);
+      var h2Y = h1Y + h1M.desc + DD_GAP + h2M.asc;
+      var rowPitch2 = h2M.asc + h2M.desc;
+      var row1r = h2Y + h2M.desc + DD_GAP + h2M.asc;
+      ddCentered("Update Review Deck", h1Y, h1Font);
+      ddCentered("with missed cards?", h2Y, h2Font);
+      ddListRow("Yes", row1r, sim.quizReviewPromptCursor === 0, h2Font);
+      ddListRow("No", row1r + rowPitch2, sim.quizReviewPromptCursor === 1, h2Font);
     }
   }
 

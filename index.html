@@ -313,6 +313,27 @@ footer.site .wrap { display: flex; justify-content: space-between; align-items: 
   </div>
 </div>
 
+<div class="modal-overlay" id="shipping-overlay">
+  <div class="modal-card">
+    <button type="button" class="modal-close" id="shipping-close" aria-label="Close">&times;</button>
+    <h3>Shipping to</h3>
+    <p class="modal-sub" id="shipping-sub">Enter your ZIP code to see shipping cost and delivery estimate before you pay.</p>
+    <form id="shipping-zip-form">
+      <input type="text" id="shipping-zip" placeholder="ZIP code" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" required autocomplete="postal-code" />
+      <button type="submit" class="buy-btn" id="shipping-zip-btn">See shipping cost</button>
+    </form>
+    <div id="shipping-quote-result" style="display:none;">
+      <div style="background:var(--gray-light); border-radius:14px; padding:16px 18px; margin:4px 0 18px;">
+        <div style="display:flex; justify-content:space-between; font-size:13.5px; margin-bottom:6px;"><span style="color:var(--gray-mid);">Device</span><span id="sq-device-price"></span></div>
+        <div style="display:flex; justify-content:space-between; font-size:13.5px; margin-bottom:6px;"><span style="color:var(--gray-mid);" id="sq-carrier"></span><span id="sq-fee"></span></div>
+        <div style="display:flex; justify-content:space-between; font-size:12.5px; color:var(--gray-mid); border-top:1px solid var(--line); padding-top:8px; margin-top:2px;"><span>Estimated delivery</span><span id="sq-eta"></span></div>
+      </div>
+      <p class="dd-note" style="margin-bottom:14px;">Tax is calculated next, on Stripe's own secure payment page, based on your full address.</p>
+      <button type="button" class="buy-btn" id="shipping-continue-btn">Continue to payment</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="basics-viewer-overlay">
   <div class="modal-card" style="max-width:480px;">
     <button type="button" class="modal-close" id="basics-viewer-close" aria-label="Close">&times;</button>
@@ -5564,8 +5585,12 @@ void loop() {
   // Calls the NodeCard backend (Render), which creates a real Stripe
   // Checkout Session server-side using the SECRET key, then redirects the
   // browser to Stripe's own hosted checkout page. The backend's expected
-  // request body is documented at the top of backend/index.js.
-  function startCheckout(priceId, mode, tutorStripeAccountId) {
+  // request body is documented at the top of backend/index.js. Tax is
+  // never computed or shown here on the site itself -- it only ever
+  // appears on Stripe's own page (automatic_tax), based on the real
+  // address entered there.
+  function startCheckout(priceId, mode, opts) {
+    opts = opts || {};
     if (!priceId || priceId.indexOf('REPLACE_ME') !== -1) {
       showToast('Checkout not configured yet -- set the Stripe Price ID first.');
       return;
@@ -5576,7 +5601,9 @@ void loop() {
       body: JSON.stringify({
         mode: mode,
         priceId: priceId,
-        tutorStripeAccountId: tutorStripeAccountId || undefined,
+        tutorStripeAccountId: opts.tutorStripeAccountId || undefined,
+        needsShipping: !!opts.needsShipping,
+        shippingQuote: opts.shippingQuote || undefined,
         successUrl: window.location.origin + window.location.pathname + '?checkout=success',
         cancelUrl: window.location.origin + window.location.pathname + '?checkout=cancel',
       }),
@@ -5590,8 +5617,60 @@ void loop() {
   }
 
   // ---- Buy button: the $46 NodeCard device, one-time payment ----
-  document.getElementById('buy-btn').addEventListener('click', function () {
-    startCheckout(window.NODECARD_DEVICE_PRICE_ID, 'payment');
+  // Physical good -> needs a shipping quote first, so the customer sees
+  // the real fee and delivery window before they ever reach payment.
+  var shippingOverlay = document.getElementById('shipping-overlay');
+  var lastShippingQuote = null;
+  function openShippingModal() {
+    document.getElementById('shipping-zip-form').style.display = '';
+    document.getElementById('shipping-quote-result').style.display = 'none';
+    document.getElementById('shipping-zip').value = '';
+    lastShippingQuote = null;
+    shippingOverlay.classList.add('is-shown');
+    setTimeout(function () { document.getElementById('shipping-zip').focus(); }, 10);
+  }
+  function closeShippingModal() { shippingOverlay.classList.remove('is-shown'); }
+  document.getElementById('shipping-close').addEventListener('click', closeShippingModal);
+  shippingOverlay.addEventListener('click', function (e) { if (e.target === shippingOverlay) closeShippingModal(); });
+
+  document.getElementById('buy-btn').addEventListener('click', openShippingModal);
+
+  document.getElementById('shipping-zip-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var zip = document.getElementById('shipping-zip').value.trim();
+    if (!/^\d{5}$/.test(zip)) { showToast('Enter a valid 5-digit ZIP code.'); return; }
+    var btn = document.getElementById('shipping-zip-btn');
+    btn.disabled = true; btn.textContent = 'Checking...';
+    fetch(window.NODECARD_API_BASE + '/shipping-quote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zip: zip }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        btn.disabled = false; btn.textContent = 'See shipping cost';
+        if (!data.feeCents) { showToast('Could not get a shipping quote for that ZIP.'); return; }
+        lastShippingQuote = data;
+        document.getElementById('sq-device-price').textContent = '$46.00';
+        document.getElementById('sq-carrier').textContent = data.carrier;
+        document.getElementById('sq-fee').textContent = '$' + (data.feeCents / 100).toFixed(2);
+        document.getElementById('sq-eta').textContent = data.etaMinDays + '–' + data.etaMaxDays + ' business days';
+        document.getElementById('shipping-zip-form').style.display = 'none';
+        document.getElementById('shipping-quote-result').style.display = '';
+      })
+      .catch(function () {
+        btn.disabled = false; btn.textContent = 'See shipping cost';
+        showToast('Could not reach the shipping calculator -- check your connection and try again.');
+      });
+  });
+
+  document.getElementById('shipping-continue-btn').addEventListener('click', function () {
+    if (!lastShippingQuote) return;
+    closeShippingModal();
+    startCheckout(window.NODECARD_DEVICE_PRICE_ID, 'payment', {
+      needsShipping: true,
+      shippingQuote: lastShippingQuote,
+    });
   });
 
   // ---- Keep the buy-section's color readout in sync with the 3D model's own color picker ----
@@ -6005,7 +6084,9 @@ void loop() {
   // centers have signed up with real Stripe Connect accounts and real
   // Price IDs. When that's ready, swap the addPurchasedDeck() call below
   // for startCheckout(deck.stripePriceId, mode === 'onetime' ? 'payment'
-  // : 'subscription', deck.tutorStripeAccountId).
+  // : 'subscription', { tutorStripeAccountId: deck.tutorStripeAccountId })
+  // -- decks are digital (delivered over USB-C), so needsShipping stays
+  // false/omitted.
   function purchaseDeck(deck, mode) {
     requireSignIn(function () {
       var email = getSignedInEmail();

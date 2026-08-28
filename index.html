@@ -317,26 +317,16 @@ footer.site .wrap { display: flex; justify-content: space-between; align-items: 
   <div class="modal-card" style="max-width:420px;">
     <button type="button" class="modal-close" id="shipping-close" aria-label="Close">&times;</button>
 
-    <!-- Page 1 of 2: contact + shipping details -->
+    <!-- Page 1 of 2: just enough to quote shipping -- the full address is
+         only ever collected once, on Stripe's own page next (its hosted
+         Checkout can't accept a pre-filled shipping address for guest
+         checkout anyway, so asking for it twice was pure duplication). -->
     <div id="checkout-step-info">
       <h3>Your information</h3>
-      <p class="modal-sub">Page 1 of 2 &middot; where NodeCard ships to. Payment comes next.</p>
+      <p class="modal-sub">Page 1 of 2 &middot; your email and ZIP for a shipping quote. Your full address is entered once, on Stripe's payment page next.</p>
       <form id="shipping-zip-form" style="display:flex; flex-direction:column; gap:12px;">
-        <input type="text" id="ship-name" placeholder="Full name" required autocomplete="name" />
         <input type="email" id="ship-email" placeholder="Email address" required autocomplete="email" />
-        <input type="text" id="ship-address1" placeholder="Address" required autocomplete="address-line1" />
-        <input type="text" id="ship-address2" placeholder="Apt, suite, etc. (optional)" autocomplete="address-line2" />
-        <div style="display:flex; gap:10px;">
-          <input type="text" id="ship-city" placeholder="City" required autocomplete="address-level2" style="flex:2;" />
-          <select id="ship-state" required autocomplete="address-level1" style="flex:1; padding:12px 10px; border-radius:12px; border:1px solid var(--line); background:var(--gray-light); font:inherit; font-size:14px; color:var(--gray-dark);">
-            <option value="" disabled selected>State</option>
-            <option>AL</option><option>AK</option><option>AZ</option><option>AR</option><option>CA</option><option>CO</option><option>CT</option><option>DE</option><option>FL</option><option>GA</option><option>HI</option><option>ID</option><option>IL</option><option>IN</option><option>IA</option><option>KS</option><option>KY</option><option>LA</option><option>ME</option><option>MD</option><option>MA</option><option>MI</option><option>MN</option><option>MS</option><option>MO</option><option>MT</option><option>NE</option><option>NV</option><option>NH</option><option>NJ</option><option>NM</option><option>NY</option><option>NC</option><option>ND</option><option>OH</option><option>OK</option><option>OR</option><option>PA</option><option>RI</option><option>SC</option><option>SD</option><option>TN</option><option>TX</option><option>UT</option><option>VT</option><option>VA</option><option>WA</option><option>WV</option><option>WI</option><option>WY</option><option>DC</option>
-          </select>
-        </div>
-        <div style="display:flex; gap:10px;">
-          <input type="text" id="shipping-zip" placeholder="ZIP code" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" required autocomplete="postal-code" style="flex:1;" />
-          <input type="tel" id="ship-phone" placeholder="Phone" required autocomplete="tel" style="flex:1;" />
-        </div>
+        <input type="text" id="shipping-zip" placeholder="ZIP code" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" required autocomplete="postal-code" />
         <label style="display:flex; align-items:flex-start; gap:8px; font-size:12.5px; color:var(--gray-mid); line-height:1.5; margin-top:2px;">
           <input type="checkbox" id="ship-privacy" required style="margin-top:2px; flex:none;" />
           <span>I agree to the <button type="button" id="privacy-link" class="link-btn" style="font-size:12.5px;">Privacy Policy</button> and consent to my shipping/contact info being used to fulfill this order.</span>
@@ -353,7 +343,7 @@ footer.site .wrap { display: flex; justify-content: space-between; align-items: 
         <div style="display:flex; justify-content:space-between; font-size:13.5px; margin-bottom:6px;"><span style="color:var(--gray-mid);">Device</span><span id="sq-device-price"></span></div>
         <div style="display:flex; justify-content:space-between; font-size:13.5px; margin-bottom:6px;"><span style="color:var(--gray-mid);" id="sq-carrier"></span><span id="sq-fee"></span></div>
         <div style="display:flex; justify-content:space-between; font-size:12.5px; color:var(--gray-mid); border-top:1px solid var(--line); padding-top:8px; margin-top:2px;"><span>Estimated delivery</span><span id="sq-eta"></span></div>
-        <div style="display:flex; justify-content:space-between; font-size:12.5px; color:var(--gray-mid); margin-top:8px;"><span>Shipping to</span><span id="sq-address"></span></div>
+        <div style="display:flex; justify-content:space-between; font-size:12.5px; color:var(--gray-mid); margin-top:8px;"><span>Shipping to ZIP</span><span id="sq-address"></span></div>
       </div>
       <p class="dd-note" style="margin-bottom:14px;">Tax is added automatically on the next screen, based on your address -- your card is charged the full total there, not here.</p>
       <button type="button" class="buy-btn" id="shipping-back-btn" style="background:var(--gray-light); color:var(--gray-dark); margin-bottom:8px;">&larr; Back</button>
@@ -5679,7 +5669,7 @@ void loop() {
     lastShippingQuote = null;
     lastShippingInfo = null;
     shippingOverlay.classList.add('is-shown');
-    setTimeout(function () { document.getElementById('ship-name').focus(); }, 10);
+    setTimeout(function () { document.getElementById('ship-email').focus(); }, 10);
   }
   function closeShippingModal() { shippingOverlay.classList.remove('is-shown'); }
   document.getElementById('shipping-close').addEventListener('click', closeShippingModal);
@@ -5701,14 +5691,8 @@ void loop() {
     if (!document.getElementById('ship-privacy').checked) { showToast('Please agree to the Privacy Policy to continue.'); return; }
 
     lastShippingInfo = {
-      name: document.getElementById('ship-name').value.trim(),
       email: document.getElementById('ship-email').value.trim(),
-      address1: document.getElementById('ship-address1').value.trim(),
-      address2: document.getElementById('ship-address2').value.trim(),
-      city: document.getElementById('ship-city').value.trim(),
-      state: document.getElementById('ship-state').value,
       zip: zip,
-      phone: document.getElementById('ship-phone').value.trim(),
     };
 
     var btn = document.getElementById('shipping-zip-btn');
@@ -5727,7 +5711,7 @@ void loop() {
         document.getElementById('sq-carrier').textContent = data.carrier;
         document.getElementById('sq-fee').textContent = '$' + (data.feeCents / 100).toFixed(2);
         document.getElementById('sq-eta').textContent = data.etaMinDays + '–' + data.etaMaxDays + ' business days';
-        document.getElementById('sq-address').textContent = lastShippingInfo.city + ', ' + lastShippingInfo.state + ' ' + lastShippingInfo.zip;
+        document.getElementById('sq-address').textContent = lastShippingInfo.zip;
         infoStep.style.display = 'none';
         reviewStep.style.display = '';
       })

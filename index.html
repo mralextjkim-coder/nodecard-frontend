@@ -3316,8 +3316,38 @@ window.OrbitControls = OrbitControls;
   // way drawModeSelectLive already replaced its own missing/stale
   // pre-rendered frames: draw it live instead, real-bounded so it can
   // never overflow the margin regardless of deck count.
+  // Scroll indicator reserve (2026-08-30), mirrors ui.h's
+  // SCROLLBAR_RESERVE_W/SCROLLBAR_TRACK_W exactly (1px gap + 3px track +
+  // 2px gap) so the two stay visually consistent even though this JS path
+  // is a live-drawn approximation, not a u8g2 pixel dump.
+  var DD_SCROLLBAR_TRACK_W = 3;
+  var DD_SCROLLBAR_RESERVE_W = 6;
+  function ddDrawScrollbar(areaTop, areaBottom, count, capacity, startIndex) {
+    var trackX = OLED_LOGICAL_W - DD_MARGIN - DD_SCROLLBAR_TRACK_W;
+    var trackH = areaBottom - areaTop;
+    if (trackH < 4 || count === 0) return;
+    octx.fillStyle = LCD_FG;
+    // Hollow 1px-border track (mirrors u8g2_DrawFrame's outline, not a filled box).
+    octx.fillRect(trackX, areaTop, DD_SCROLLBAR_TRACK_W, 1);
+    octx.fillRect(trackX, areaTop + trackH - 1, DD_SCROLLBAR_TRACK_W, 1);
+    octx.fillRect(trackX, areaTop, 1, trackH);
+    octx.fillRect(trackX + DD_SCROLLBAR_TRACK_W - 1, areaTop, 1, trackH);
+    var thumbH = Math.round((trackH * capacity) / count);
+    if (thumbH < 3) thumbH = 3;
+    if (thumbH > trackH) thumbH = trackH;
+    var maxThumbY = trackH - thumbH;
+    var maxStart = count - capacity;
+    var thumbY = maxStart > 0 ? Math.round((maxThumbY * startIndex) / maxStart) : 0;
+    octx.fillRect(trackX, areaTop + thumbY, DD_SCROLLBAR_TRACK_W, thumbH);
+  }
+
   function drawDeckSelectLive() {
-    var titleFont = "10px Literata, Georgia, serif";
+    // Title at least 2 font sizes bigger than the deck list (2026-08-30,
+    // explicit request) -- rowFont stays the normal 10px body size;
+    // titleFont steps up two real CSS px sizes (10 -> 12 -> 14) and goes
+    // bold, mirroring ui.h's drawDeckSelectHeader (FONT_SMALL -> the
+    // helvB12 floor of pickDeckSelectTitleFont, also 2 ladder rungs up).
+    var titleFont = "bold 14px Literata, Georgia, serif";
     var rowFont = "10px Literata, Georgia, serif";
     var tm = ddMetrics(titleFont), rm = ddMetrics(rowFont);
     var gap = 1;
@@ -3326,15 +3356,36 @@ window.OrbitControls = OrbitControls;
 
     var titleY = DD_MARGIN + tm.asc;
     var titleLines = ddCenteredWrap("NODECARD", titleY, titleFont, pitch);
-    var y = titleY + (titleLines - 1) * pitch + tm.desc + gap + rm.asc;
+    var listTop = titleY + (titleLines - 1) * pitch + tm.desc + gap;
+    var y = listTop + rm.asc;
 
+    // Adaptive scroll window + scrollbar (2026-08-30): capacity is how
+    // many single-line rows really fit in the remaining vertical budget
+    // now that the title is bigger. If every deck fits, nothing scrolls
+    // and no scrollbar is drawn -- both the window and the scrollbar's
+    // own size/position are computed fresh from the real deck count and
+    // cursor every frame, same real logic as ui.h's drawSelectableList.
+    var count = DECKS_JS.length;
+    var capacity = Math.max(1, Math.floor((bottom - listTop) / pitch));
+    var needsScrollbar = count > capacity;
+    var startIndex = 0;
+    if (needsScrollbar) {
+      if (sim.deckCursor < startIndex) startIndex = sim.deckCursor;
+      if (sim.deckCursor >= startIndex + capacity) startIndex = sim.deckCursor - capacity + 1;
+      var maxStart = count - capacity;
+      if (startIndex > maxStart) startIndex = maxStart;
+    }
+
+    var rowMaxW = (DD_SAFE_W - 6) - (needsScrollbar ? DD_SCROLLBAR_RESERVE_W : 0);
     // Rule 7 (2026-08-28): a deck name too long to fit wraps instead of
     // truncating -- running Y cursor advances by however many lines each
     // entry actually used, same pattern as ui.h's drawSelectableList.
-    for (var i = 0; i < DECKS_JS.length; i++) {
+    for (var i = startIndex; i < count; i++) {
       if (y + rm.desc > bottom) break;  // real bound -- never overflows
-      y += ddListRowWrap(DECKS_JS[i].name, y, i === sim.deckCursor, rowFont, pitch) * pitch;
+      y += ddListRowWrap(DECKS_JS[i].name, y, i === sim.deckCursor, rowFont, pitch, rowMaxW) * pitch;
     }
+
+    if (needsScrollbar) ddDrawScrollbar(listTop, bottom, count, capacity, startIndex);
   }
 
   // Quiz screens can't use the pre-rendered-real-u8g2-PNG approach every
@@ -3443,10 +3494,14 @@ window.OrbitControls = OrbitControls;
     for (var i = 0; i < lines.length; i++) ddCentered(lines[i], y + i * pitch, font);
     return lines.length;
   }
-  function ddListRow(text, y, selected, font) {
+  function ddListRow(text, y, selected, font, maxW) {
     // Leaves room for the selection box's 3px inset each side, so the
     // box itself (not just the text inside it) stays margin-safe too.
-    var safe = truncateToFit(text, font, DD_SAFE_W - 6);
+    // Optional maxW (2026-08-30) lets a scrollable list (drawDeckSelectLive)
+    // narrow this further to leave room for the scrollbar track; every
+    // other caller omits it and gets the original DD_SAFE_W - 6 budget.
+    if (maxW === undefined) maxW = DD_SAFE_W - 6;
+    var safe = truncateToFit(text, font, maxW);
     octx.font = font;
     var w = octx.measureText(safe).width;
     var x = (OLED_LOGICAL_W - w) / 2;
@@ -3473,14 +3528,15 @@ window.OrbitControls = OrbitControls;
   // for a selectable list row -- each wrapped line gets its own
   // selection-box highlight (if selected) via ddListRow itself. Returns
   // how many lines it used.
-  function ddListRowWrap(text, y, selected, font, pitch) {
+  function ddListRowWrap(text, y, selected, font, pitch, maxW) {
+    if (maxW === undefined) maxW = DD_SAFE_W - 6;
     octx.font = font;
-    if (octx.measureText(text).width <= DD_SAFE_W - 6) {
-      ddListRow(text, y, selected, font);
+    if (octx.measureText(text).width <= maxW) {
+      ddListRow(text, y, selected, font, maxW);
       return 1;
     }
-    var lines = ddWrapNoTruncate(text, font, DD_SAFE_W - 6);
-    for (var i = 0; i < lines.length; i++) ddListRow(lines[i], y + i * pitch, selected, font);
+    var lines = ddWrapNoTruncate(text, font, maxW);
+    for (var i = 0; i < lines.length; i++) ddListRow(lines[i], y + i * pitch, selected, font, maxW);
     return lines.length;
   }
   function ddMetrics(font) {
